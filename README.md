@@ -133,6 +133,211 @@ Falls der Namespace noch nicht existiert:
 kubectl create namespace flwr
 ```
 
+## Initiale Systemeinrichtung
+
+Dieser Abschnitt beschreibt die Grundvoraussetzungen, die vor der Nutzung des GreenAI-Orchestrators eingerichtet sein müssen. Die Befehle sind als Beispiel für eine Linux-basierte GreenAI-Control-VM gedacht und müssen ggf. an die lokale Umgebung angepasst werden.
+
+Falls die Umgebung bereits eingerichtet ist, muss dieser Abschnitt nicht erneut ausgeführt werden. Er dient vor allem der Reproduzierbarkeit der Demonstrationsumgebung.
+
+### 1. Linux-VM vorbereiten
+
+Auf der GreenAI-Control-VM sollten grundlegende Werkzeuge installiert sein:
+
+```bash
+sudo apt update
+sudo apt install -y curl git python3 python3-venv python3-pip ca-certificates
+```
+
+Optional kann Docker installiert werden, wenn Container Images lokal gebaut oder in eine Registry gepusht werden sollen:
+
+```bash
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+
+sudo usermod -aG docker "$USER"
+```
+
+Danach einmal neu anmelden oder die VM neu starten, damit die Docker-Gruppenrechte aktiv werden.
+
+Prüfen:
+
+```bash
+docker --version
+docker run hello-world
+```
+
+### 2. k3s-Control-Node installieren
+
+Auf der Control-VM kann ein k3s-Server installiert werden:
+
+```bash
+curl -sfL https://get.k3s.io | sh -
+```
+
+Status prüfen:
+
+```bash
+sudo systemctl status k3s
+sudo k3s kubectl get nodes
+```
+
+Damit `kubectl` ohne `sudo` genutzt werden kann, wird die kubeconfig in das Benutzerverzeichnis kopiert:
+
+```bash
+mkdir -p ~/.kube
+sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+sudo chown "$USER:$USER" ~/.kube/config
+chmod 600 ~/.kube/config
+export KUBECONFIG=~/.kube/config
+```
+
+Optional kann die Variable dauerhaft in die Shell-Konfiguration übernommen werden:
+
+```bash
+echo 'export KUBECONFIG=~/.kube/config' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Prüfen:
+
+```bash
+kubectl get nodes
+kubectl get pods -A
+```
+
+### 3. Weitere k3s-Agent-Nodes hinzufügen
+
+Auf der Control-VM wird zuerst der Join-Token ausgelesen:
+
+```bash
+sudo cat /var/lib/rancher/k3s/server/node-token
+```
+
+Auf jedem weiteren Node kann anschließend der k3s-Agent installiert werden. Dabei müssen `<CONTROL_NODE_IP>` und `<NODE_TOKEN>` ersetzt werden:
+
+```bash
+curl -sfL https://get.k3s.io | \
+  K3S_URL=https://<CONTROL_NODE_IP>:6443 \
+  K3S_TOKEN=<NODE_TOKEN> \
+  sh -
+```
+
+Danach auf der Control-VM prüfen:
+
+```bash
+kubectl get nodes -o wide
+```
+
+Jeder Node sollte einen eindeutigen Hostnamen besitzen. Falls nötig, kann der Node-Name beim Join explizit gesetzt werden:
+
+```bash
+curl -sfL https://get.k3s.io | \
+  K3S_URL=https://<CONTROL_NODE_IP>:6443 \
+  K3S_TOKEN=<NODE_TOKEN> \
+  K3S_NODE_NAME=<EINDEUTIGER_NODE_NAME> \
+  sh -
+```
+
+### 4. Namespace für Flower anlegen
+
+Die Demonstrationsumgebung verwendet standardmäßig den Namespace `flwr`:
+
+```bash
+kubectl create namespace flwr
+```
+
+Falls der Namespace bereits existiert, ist die Fehlermeldung unkritisch.
+
+Prüfen:
+
+```bash
+kubectl get namespaces
+```
+
+### 5. Nodes prüfen und labeln
+
+Die vorhandenen Nodes können mit folgendem Befehl angezeigt werden:
+
+```bash
+kubectl get nodes -o wide
+```
+
+Falls die Experimentsteuerung mit Node-Zuordnungen oder Labels arbeitet, müssen die Nodes passend benannt bzw. gelabelt werden. Beispiel:
+
+```bash
+kubectl label node greenai-control greenai-role=control --overwrite
+kubectl label node cloud-gpu greenai-role=cloud-gpu --overwrite
+kubectl label node old-laptop greenai-role=edge --overwrite
+kubectl label node pi5-16gb greenai-role=low-power-edge --overwrite
+kubectl label node pi5-8gb greenai-role=low-power-edge --overwrite
+```
+
+Labels prüfen:
+
+```bash
+kubectl get nodes --show-labels
+```
+
+Die konkrete Zuordnung für Experimente erfolgt zusätzlich über:
+
+```text
+cluster_profiles/k3s_greenai.yaml
+node_mapping.json
+```
+
+### 6. Verbindung zur Nachhaltigkeitsarchitektur prüfen
+
+Die Nachhaltigkeitsarchitektur muss separat laufen und InfluxDB über das Netzwerk erreichbar machen.
+
+Aus der GreenAI-VM kann die Erreichbarkeit geprüft werden:
+
+```bash
+curl http://<SUSTAINABILITY-HOST-IP>:8086/health
+```
+
+Anschließend wird die lokale Influx-Konfiguration erstellt:
+
+```bash
+cp .env.influx.example .env.influx
+nano .env.influx
+```
+
+Beispiel:
+
+```bash
+export INFLUX_URL="http://<SUSTAINABILITY-HOST-IP>:8086"
+export INFLUX_ORG="thade"
+export INFLUX_BUCKET="greenaidata"
+export INFLUX_TOKEN="PLEASE_SET_TOKEN_HERE"
+```
+
+Die echte Datei `.env.influx` enthält Zugangsdaten und darf nicht in Git versioniert werden.
+
+Laden und testen:
+
+```bash
+set -a
+source .env.influx
+set +a
+
+curl "$INFLUX_URL/health"
+```
+
+### 7. Funktionsprüfung vor dem ersten Experiment
+
+Vor einem Experiment sollten diese Prüfungen erfolgreich sein:
+
+```bash
+kubectl get nodes
+kubectl get namespace flwr
+curl "$INFLUX_URL/health"
+python3 --version
+docker --version
+```
+
+Wenn diese Befehle funktionieren, kann die Python-Umgebung eingerichtet und ein Experiment gestartet werden.
+
+
 ## Installation
 
 Repository klonen:
