@@ -1,0 +1,77 @@
+name: k3s_greenai
+
+kubernetes:
+  namespace: flwr
+  template: k8s/flower-experiment.yaml.tpl
+  label_selector: "run_id={K8S_RUN_ID}"
+
+  cleanup_before_run: true
+
+  cleanup:
+    deployments:
+      - flower-superlink
+      - flower-client-cloud-gpu
+      - flower-client-old-laptop
+      - flower-client-pi5-16gb
+      - flower-client-pi5-8gb
+      - flower-client
+    statefulsets:
+      - flower-client
+    pods:
+      - flower-client-0
+      - flower-client-1
+      - flower-client-2
+      - flower-client-3
+    services:
+      - flower-superlink
+
+  rollouts:
+    - name: deployment/flower-superlink
+      timeout: 5m
+    - name: deployment/flower-client-cloud-gpu
+      timeout: 10m
+    - name: deployment/flower-client-old-laptop
+      timeout: 10m
+    - name: deployment/flower-client-pi5-16gb
+      timeout: 10m
+    - name: deployment/flower-client-pi5-8gb
+      timeout: 10m
+
+  port_forward:
+    service: svc/flower-superlink
+    local_port: 9093
+    remote_port: 9093
+    ready_timeout_s: 30
+
+nodes:
+  include_for_energy:
+    - greenai-control
+    - cloud-gpu
+    - old-laptop
+    - pi5-16gb
+    - pi5-8gb
+
+clients:
+  - name: cloud-gpu
+    deployment: flower-client-cloud-gpu
+    node: cloud-gpu
+    partition_id: 0
+    num_partitions: 4
+
+  - name: old-laptop
+    deployment: flower-client-old-laptop
+    node: old-laptop
+    partition_id: 1
+    num_partitions: 4
+
+  - name: pi5-16gb
+    deployment: flower-client-pi5-16gb
+    node: pi5-16gb
+    partition_id: 2
+    num_partitions: 4
+
+  - name: pi5-8gb
+    deployment: flower-client-pi5-8gb
+    node: pi5-8gb
+    partition_id: 3
+    num_partitions: 4

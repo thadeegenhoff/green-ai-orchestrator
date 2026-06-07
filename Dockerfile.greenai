@@ -1,0 +1,20 @@
+FROM thadegreen/quickstart-pytorch-flex:0.1
+
+USER root
+
+RUN python3 -m pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    python-multipart \
+    pillow \
+    httpx \
+    influxdb-client
+
+WORKDIR /app
+
+COPY quickstart-pytorch/pytorchexample /app/pytorchexample
+
+COPY scripts/inference_service_local.py /app/scripts/inference_service_local.py
+COPY scripts/benchmark_inference_http_local.py /app/scripts/benchmark_inference_http_local.py
+
+ENV PYTHONUNBUFFERED=1

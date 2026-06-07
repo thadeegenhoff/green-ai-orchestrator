@@ -1,0 +1,175 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flwr
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flower-superlink
+  namespace: flwr
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flower-superlink
+  template:
+    metadata:
+      labels:
+        app: flower-superlink
+    spec:
+      nodeSelector:
+        greenai.local/fl-role: server
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "node-role.kubernetes.io/master"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: superlink
+          image: flwr/superlink:1.29.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--insecure"
+            - "--isolation"
+            - "process"
+          ports:
+            - name: serverappio
+              containerPort: 9091
+            - name: fleet
+              containerPort: 9092
+            - name: control
+              containerPort: 9093
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+              ephemeral-storage: "128Mi"
+
+        - name: superexec-serverapp
+          image: thadegreen/flwr-cifar-superexec:0.2
+          imagePullPolicy: Always
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              sleep 5
+              exec flower-superexec \
+                --insecure \
+                --plugin-type serverapp \
+                --appio-api-address 127.0.0.1:9091
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+              ephemeral-storage: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flower-superlink
+  namespace: flwr
+spec:
+  selector:
+    app: flower-superlink
+  ports:
+    - name: serverappio
+      port: 9091
+      targetPort: 9091
+    - name: fleet
+      port: 9092
+      targetPort: 9092
+    - name: control
+      port: 9093
+      targetPort: 9093
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flower-client
+  namespace: flwr
+spec:
+  clusterIP: None
+  selector:
+    app: flower-client
+  ports:
+    - name: clientappio
+      port: 9094
+      targetPort: 9094
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: flower-client
+  namespace: flwr
+spec:
+  serviceName: flower-client
+  replicas: 4
+  selector:
+    matchLabels:
+      app: flower-client
+  template:
+    metadata:
+      labels:
+        app: flower-client
+    spec:
+      nodeSelector:
+        greenai.local/fl-role: client
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: flower-client
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: supernode
+          image: flwr/supernode:1.29.0
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              ORDINAL="${HOSTNAME##*-}"
+              echo "Starting Flower SuperNode with partition-id=${ORDINAL} num-partitions=4"
+
+              exec flower-supernode \
+                --insecure \
+                --superlink flower-superlink.flwr.svc.cluster.local:9092 \
+                --node-config "partition-id=${ORDINAL} num-partitions=4" \
+                --clientappio-api-address 0.0.0.0:9094 \
+                --isolation process
+          ports:
+            - name: clientappio
+              containerPort: 9094
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+              ephemeral-storage: "128Mi"
+
+        - name: superexec-clientapp
+          image: thadegreen/flwr-cifar-superexec:0.2
+          imagePullPolicy: Always
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              sleep 8
+              exec flower-superexec \
+                --insecure \
+                --plugin-type clientapp \
+                --appio-api-address 127.0.0.1:9094
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+              ephemeral-storage: "2Gi"

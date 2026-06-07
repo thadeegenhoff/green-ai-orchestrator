@@ -1,0 +1,67 @@
+{
+  "cloud-gpu": {
+    "device_class": "desktop-gpu",
+    "role": "gpu-worker",
+    "fl_role": "client",
+    "workload_zone": "cloud",
+    "performance_tier": "high",
+    "accelerator": "nvidia-rtx2060",
+    "gpu": true,
+    "arch": "amd64",
+    "mqtt_prefix": "pc",
+    "power_tag_value": "pc",
+    "idle_power_w": 67.0
+  },
+  "greenai-control": {
+    "device_class": "orchestrator-vm",
+    "role": "control-plane",
+    "fl_role": "server",
+    "workload_zone": "control",
+    "performance_tier": "medium",
+    "accelerator": "none",
+    "gpu": false,
+    "arch": "amd64",
+    "mqtt_prefix": "orchestrator",
+    "power_tag_value": "orchestrator",
+    "idle_power_w": 7.0
+  },
+  "old-laptop": {
+    "device_class": "laptop-vm",
+    "role": "edge-worker",
+    "fl_role": "client",
+    "workload_zone": "edge",
+    "performance_tier": "medium",
+    "accelerator": "none",
+    "gpu": false,
+    "arch": "amd64",
+    "mqtt_prefix": "oldlaptop",
+    "power_tag_value": "oldlaptop",
+    "idle_power_w": 7.0
+  },
+  "pi5-16gb": {
+    "device_class": "raspberry-pi",
+    "role": "edge-worker",
+    "fl_role": "client",
+    "workload_zone": "edge",
+    "performance_tier": "medium",
+    "accelerator": "none",
+    "gpu": false,
+    "arch": "arm64",
+    "mqtt_prefix": "rpi5-16gb",
+    "power_tag_value": "rpi5-16gb",
+    "idle_power_w": 2.7
+  },
+  "pi5-8gb": {
+    "device_class": "raspberry-pi",
+    "role": "edge-worker",
+    "fl_role": "client",
+    "workload_zone": "edge",
+    "performance_tier": "low",
+    "accelerator": "none",
+    "gpu": false,
+    "arch": "arm64",
+    "mqtt_prefix": "rpi5-8gb",
+    "power_tag_value": "rpi5-8gb",
+    "idle_power_w": 2.7
+  }
+}

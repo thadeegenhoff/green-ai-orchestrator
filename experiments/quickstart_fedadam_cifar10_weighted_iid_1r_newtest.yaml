@@ -1,0 +1,142 @@
+experiment:
+  name: quickstart_fedadam_cifar10_weighted_iid_1r_test
+  strategy: fedadam
+  dataset: cifar10
+  split: weighted_iid
+  model: quickstart-pytorch
+  description: 'Testlauf: CIFAR-10 mit FedAdam und leistungsgewichteter IID-Verteilung,
+    nur 1 Server-Runde zur Prüfung der Kubernetes-/Flower-Orchestrierung.'
+cluster_profile: cluster_profiles/k3s_greenai.yaml
+project:
+  app_dir: quickstart-pytorch
+  app_name: quickstart-pytorch
+  superlink_connection: null
+  stream: true
+  run_config:
+    strategy: fedadam
+    dataset: cifar10
+    split: weighted_iid
+    num-partitions: 8
+    partition-plan: high-cloud=4,medium-edge=3,low-edge=1
+    num-server-rounds: 1
+    fraction-train: 1.0
+    fraction-evaluate: 0.25
+    min-train-nodes: 2
+    min-evaluate-nodes: 2
+    min-available-nodes: 2
+    local-epochs: 1
+    learning-rate: 0.1
+    batch-size: 64
+    server-learning-rate: 0.1
+    client-learning-rate: 0.1
+    beta-1: 0.9
+    beta-2: 0.99
+    tau: 0.001
+  metadata:
+    framework: pytorch
+    task_type: image-classification
+    dataset_source: uoft-cs/cifar10
+    model_family: simple-cnn
+    image: thadegreen/quickstart-pytorch-greenai:0.2
+    resource_policy: performance_weighted
+    partition_plan: high-cloud=4,medium-edge=3,low-edge=1
+kubernetes_runtime:
+  app_image: thadegreen/quickstart-pytorch-greenai:0.2
+  superlink_image: flwr/superlink:1.29.0
+  supernode_image: flwr/supernode:1.29.0
+  client_groups:
+  - name: high-cloud
+    tier: high
+    zone: cloud
+    replicas: 4
+    node_selector:
+      greenai.local/fl-role: client
+      greenai.local/performance-tier: high
+      greenai.local/workload-zone: cloud
+    resources:
+      supernode:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+          ephemeral-storage: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 1Gi
+          ephemeral-storage: 2Gi
+      clientapp:
+        requests:
+          cpu: 800m
+          memory: 1536Mi
+          ephemeral-storage: 4Gi
+        limits:
+          cpu: 3000m
+          memory: 6Gi
+          ephemeral-storage: 10Gi
+  - name: medium-edge
+    tier: medium
+    zone: edge
+    replicas: 3
+    node_selector:
+      greenai.local/fl-role: client
+      greenai.local/performance-tier: medium
+      greenai.local/workload-zone: edge
+    resources:
+      supernode:
+        requests:
+          cpu: 150m
+          memory: 256Mi
+          ephemeral-storage: 512Mi
+        limits:
+          cpu: 750m
+          memory: 1Gi
+          ephemeral-storage: 2Gi
+      clientapp:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+          ephemeral-storage: 3Gi
+        limits:
+          cpu: 2000m
+          memory: 4Gi
+          ephemeral-storage: 8Gi
+  - name: low-edge
+    tier: low
+    zone: edge
+    replicas: 1
+    node_selector:
+      greenai.local/fl-role: client
+      greenai.local/performance-tier: low
+      greenai.local/workload-zone: edge
+    resources:
+      supernode:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+          ephemeral-storage: 512Mi
+        limits:
+          cpu: 500m
+          memory: 768Mi
+          ephemeral-storage: 2Gi
+      clientapp:
+        requests:
+          cpu: 300m
+          memory: 768Mi
+          ephemeral-storage: 3Gi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+          ephemeral-storage: 6Gi
+energy:
+  enabled: true
+  node_mapping: node_mapping.json
+  script: scripts/energy_summary.py
+  run_on_invalid: false
+metrics_export:
+  enabled: true
+  script: scripts/write_fl_metrics_to_influx.py
+  run_on_invalid: false
+report:
+  enabled: true
+  formats:
+  - markdown
+  - html

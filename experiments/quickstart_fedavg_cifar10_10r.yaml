@@ -1,0 +1,40 @@
+experiment:
+  name: quickstart_fedavg_cifar10_10r
+  strategy: fedavg
+  dataset: cifar10
+  split: iid
+  model: quickstart-pytorch
+  description: Quickstart PyTorch auf CIFAR-10 mit FedAvg, IID-Split und 10 Server-Runden.
+cluster_profile: cluster_profiles/k3s_greenai.yaml
+project:
+  app_dir: quickstart-pytorch
+  app_name: quickstart-pytorch
+  superlink_connection: null
+  stream: true
+  run_config:
+    num-server-rounds: 10
+    fraction-evaluate: 0.5
+    local-epochs: 1
+    learning-rate: 0.1
+    batch-size: 32
+  metadata:
+    framework: pytorch
+    task_type: image-classification
+    dataset_source: uoft-cs/cifar10
+    model_family: simple-cnn
+energy:
+  enabled: true
+  node_mapping: node_mapping.json
+  script: scripts/energy_summary.py
+  run_on_invalid: false
+metrics_export:
+  enabled: true
+  script: scripts/write_fl_metrics_to_influx.py
+  run_on_invalid: false
+report:
+  enabled: true
+  formats:
+  - markdown
+  - html
+kubernetes_runtime:
+  app_image: thadegreen/quickstart-pytorch-greenai:0.2
