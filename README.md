@@ -170,28 +170,6 @@ docker build -t greenai-orchestrator:local -f Dockerfile.greenai .
 
 Für gemischte x86-/ARM-Cluster sollte das Image als Multi-Arch-Image gebaut und in eine Registry gepusht werden.
 
-## Nicht committen
-
-```text
-.env.influx
-runs/
-data/
-.venv/
-*.log
-Tokens
-Passwörter
-API-Keys
-private Schlüssel
-```
-
-Vor einem Commit prüfen:
-
-```bash
-git status
-git diff --cached --name-only
-git grep -n -i "token\|password\|secret\|api_key\|apikey\|passwd"
-```
-
 ## Kurzablauf
 
 ```bash
