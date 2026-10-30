@@ -1,0 +1,7 @@
+# Used by the orchestrator's local port-forward to the K3s SuperLink.
+[superlink]
+default = "greenai-k3s"
+
+[superlink.greenai-k3s]
+address = "127.0.0.1:9093"
+insecure = true

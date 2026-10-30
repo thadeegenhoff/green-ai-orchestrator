@@ -10,6 +10,8 @@ from dateutil.parser import isoparse
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 
+from energy_integration import aggregate_energy_results, calculate_energy
+
 
 PERFORMANCE_FIELDS = [
     "samples",
@@ -144,54 +146,6 @@ from(bucket: "{flux_escape(bucket)}")
     return samples
 
 
-def calculate_energy(samples, start_time, end_time, idle_power_w=None):
-    duration_s = (end_time - start_time).total_seconds()
-    duration_h = duration_s / 3600.0
-
-    if len(samples) < 2 or duration_s <= 0:
-        return {
-            "duration_s": float(duration_s),
-            "sample_count": float(len(samples)),
-            "energy_wh": 0.0,
-            "net_energy_wh": None,
-            "avg_power_w": 0.0,
-            "max_power_w": 0.0,
-            "min_power_w": 0.0,
-        }
-
-    points = [(start_time, samples[0][1])] + samples + [(end_time, samples[-1][1])]
-
-    energy_wh = 0.0
-
-    for i in range(len(points) - 1):
-        t1, p1 = points[i]
-        t2, p2 = points[i + 1]
-
-        delta_s = (t2 - t1).total_seconds()
-        if delta_s <= 0:
-            continue
-
-        avg_power = (p1 + p2) / 2.0
-        energy_wh += avg_power * delta_s / 3600.0
-
-    powers = [p for _, p in samples]
-    avg_power_w = energy_wh / duration_h if duration_h > 0 else 0.0
-
-    net_energy_wh = None
-    if idle_power_w is not None:
-        net_energy_wh = max(0.0, energy_wh - float(idle_power_w) * duration_h)
-
-    return {
-        "duration_s": float(duration_s),
-        "sample_count": float(len(samples)),
-        "energy_wh": float(energy_wh),
-        "net_energy_wh": net_energy_wh,
-        "avg_power_w": float(avg_power_w),
-        "max_power_w": float(max(powers)),
-        "min_power_w": float(min(powers)),
-    }
-
-
 def node_entry_from_mapping(node_name, node_mapping):
     mapping = node_mapping.get(node_name, {}) or {}
 
@@ -320,9 +274,6 @@ def main():
         raise SystemExit("Fehler: Keine Nodes für Energieauswertung angegeben.")
 
     node_results = []
-    total_energy_wh = 0.0
-    total_net_energy_wh = 0.0
-    has_net = False
 
     duration_s = (end_time - start_time).total_seconds()
     duration_h = duration_s / 3600.0 if duration_s > 0 else 0.0
@@ -368,25 +319,21 @@ def main():
                 idle_power_w=idle_power_w,
             )
 
-            energy_j = energy["energy_wh"] * 3600.0
-            joule_per_request = energy_j / successful_requests if successful_requests > 0 else 0.0
-            wh_per_1000_requests = energy["energy_wh"] / successful_requests * 1000.0 if successful_requests > 0 else 0.0
-
-            net_energy_j = None
-            net_joule_per_request = None
-            net_wh_per_1000_requests = None
-
-            if energy["net_energy_wh"] is not None:
-                has_net = True
-                net_energy_j = energy["net_energy_wh"] * 3600.0
-                net_joule_per_request = net_energy_j / successful_requests if successful_requests > 0 else 0.0
-                net_wh_per_1000_requests = energy["net_energy_wh"] / successful_requests * 1000.0 if successful_requests > 0 else 0.0
-                total_net_energy_wh += energy["net_energy_wh"]
-
-            total_energy_wh += energy["energy_wh"]
+            energy_j = energy["energy_wh"] * 3600.0 if energy["valid"] else None
+            net_energy_j = (
+                energy["net_energy_wh"] * 3600.0
+                if energy["net_energy_wh"] is not None else None
+            )
+            joule_per_request = energy_j / successful_requests if energy_j is not None and successful_requests > 0 else None
+            wh_per_1000_requests = energy["energy_wh"] / successful_requests * 1000.0 if energy["valid"] and successful_requests > 0 else None
+            net_joule_per_request = net_energy_j / successful_requests if net_energy_j is not None and successful_requests > 0 else None
+            net_wh_per_1000_requests = energy["net_energy_wh"] / successful_requests * 1000.0 if net_energy_j is not None and successful_requests > 0 else None
 
             node_result = {
                 "node": node,
+                "valid": energy["valid"],
+                "measurement_status": energy["measurement_status"],
+                "sample_count": energy["sample_count"],
                 "node_eval_role": node_eval_role,
                 "device": power_tag_value,
                 "shelly": shelly,
@@ -433,65 +380,53 @@ def main():
                 .tag("batch_size", clean_tag(batch_size))
                 .field("duration_s", float(energy["duration_s"]))
                 .field("power_sample_count", float(energy["sample_count"]))
-                .field("energy_wh", float(energy["energy_wh"]))
-                .field("energy_j", float(energy_j))
-                .field("avg_power_w", float(energy["avg_power_w"]))
-                .field("min_power_w", float(energy["min_power_w"]))
-                .field("max_power_w", float(energy["max_power_w"]))
                 .field("requests", float(requests))
                 .field("successful_requests", float(successful_requests))
-                .field("joule_per_request", float(joule_per_request))
-                .field("wh_per_1000_requests", float(wh_per_1000_requests))
-                .field("valid", 1.0)
+                .field("valid", float(energy["valid"]))
+                .field("measurement_status", energy["measurement_status"])
                 .time(end_time, WritePrecision.NS)
             )
 
-            if energy["net_energy_wh"] is not None:
-                point = (
-                    point
-                    .field("net_energy_wh", float(energy["net_energy_wh"]))
-                    .field("net_energy_j", float(net_energy_j))
-                    .field("net_joule_per_request", float(net_joule_per_request))
-                    .field("net_wh_per_1000_requests", float(net_wh_per_1000_requests))
-                )
+            point = add_float_fields(point, {
+                key: node_result[key] for key in [
+                    "energy_wh", "energy_j", "avg_power_w", "min_power_w", "max_power_w",
+                    "joule_per_request", "wh_per_1000_requests", "net_energy_wh", "net_energy_j",
+                    "net_joule_per_request", "net_wh_per_1000_requests",
+                ]
+            })
 
             write_api.write(bucket=influx_bucket, org=influx_org, record=point)
 
-            print(
-                f"{node} / device={power_tag_value}: "
-                f"{energy['energy_wh']:.6f} Wh, "
-                f"{joule_per_request:.6f} J/request, "
-                f"avg={energy['avg_power_w']:.2f} W, "
-                f"samples={int(energy['sample_count'])}"
-            )
+            if energy["valid"]:
+                print(f"{node} / device={power_tag_value}: {energy['energy_wh']:.6f} Wh, "
+                      f"avg={energy['avg_power_w']:.2f} W, samples={int(energy['sample_count'])}")
+            else:
+                print(f"{node} / device={power_tag_value}: INVALID "
+                      f"({energy['measurement_status']}), samples={int(energy['sample_count'])}")
 
-        total_energy_j = total_energy_wh * 3600.0
-        total_avg_power_w = total_energy_wh / duration_h if duration_h > 0 else 0.0
-        total_joule_per_request = total_energy_j / successful_requests if successful_requests > 0 else 0.0
-        total_wh_per_1000_requests = total_energy_wh / successful_requests * 1000.0 if successful_requests > 0 else 0.0
-
-        total_net_energy_j = total_net_energy_wh * 3600.0 if has_net else None
-        total_net_joule_per_request = total_net_energy_j / successful_requests if has_net and successful_requests > 0 else None
-        total_net_wh_per_1000_requests = total_net_energy_wh / successful_requests * 1000.0 if has_net and successful_requests > 0 else None
-
+        totals = aggregate_energy_results(node_results)
+        total_energy_wh = totals["total_energy_wh"]
+        total_energy_j = total_energy_wh * 3600.0 if total_energy_wh is not None else None
+        total_net_energy_wh = totals["total_net_energy_wh"]
+        total_net_energy_j = total_net_energy_wh * 3600.0 if total_net_energy_wh is not None else None
         total_fields = {
             "duration_s": float(duration_s),
             "requests": float(requests),
             "successful_requests": float(successful_requests),
-            "power_node_count": float(len(node_names)),
-            "total_energy_wh": float(total_energy_wh),
-            "total_energy_j": float(total_energy_j),
-            "total_avg_power_w": float(total_avg_power_w),
-            "total_joule_per_request": float(total_joule_per_request),
-            "total_wh_per_1000_requests": float(total_wh_per_1000_requests),
-            "valid": 1.0,
+            "power_node_count": float(totals["power_node_count"]),
+            "valid_power_node_count": float(totals["valid_power_node_count"]),
+            "invalid_power_node_count": float(totals["invalid_power_node_count"]),
+            "total_energy_wh": total_energy_wh,
+            "total_energy_j": total_energy_j,
+            "total_avg_power_w": total_energy_wh / duration_h if total_energy_wh is not None and duration_h > 0 else None,
+            "total_joule_per_request": total_energy_j / successful_requests if total_energy_j is not None and successful_requests > 0 else None,
+            "total_wh_per_1000_requests": total_energy_wh / successful_requests * 1000.0 if total_energy_wh is not None and successful_requests > 0 else None,
+            "total_net_energy_wh": total_net_energy_wh,
+            "total_net_energy_j": total_net_energy_j,
+            "total_net_joule_per_request": total_net_energy_j / successful_requests if total_net_energy_j is not None and successful_requests > 0 else None,
+            "total_net_wh_per_1000_requests": total_net_energy_wh / successful_requests * 1000.0 if total_net_energy_wh is not None and successful_requests > 0 else None,
+            "valid": float(totals["valid"]),
         }
-
-        if has_net:
-            total_fields["total_net_energy_wh"] = float(total_net_energy_wh)
-            total_fields["total_net_energy_j"] = float(total_net_energy_j)
-            total_fields["total_net_joule_per_request"] = float(total_net_joule_per_request)
-            total_fields["total_net_wh_per_1000_requests"] = float(total_net_wh_per_1000_requests)
 
         common_tags = (
             Point("fl_inference_energy_total")
@@ -508,6 +443,7 @@ def main():
             .time(end_time, WritePrecision.NS)
         )
 
+        common_tags.field("measurement_status", totals["measurement_status"])
         common_tags = add_float_fields(common_tags, total_fields)
         write_api.write(bucket=influx_bucket, org=influx_org, record=common_tags)
 
@@ -527,6 +463,7 @@ def main():
         )
 
         perf_values = {key: summary.get(key) for key in PERFORMANCE_FIELDS}
+        eval_point.field("measurement_status", totals["measurement_status"])
         eval_point = add_float_fields(eval_point, perf_values)
         eval_point = add_float_fields(eval_point, total_fields)
 
@@ -546,6 +483,7 @@ def main():
         "batch_size": batch_size,
         "benchmark_start_time": start_time.isoformat().replace("+00:00", "Z"),
         "benchmark_end_time": end_time.isoformat().replace("+00:00", "Z"),
+        "measurement_status": totals["measurement_status"],
         "total": total_fields,
         "nodes": node_results,
     }
@@ -557,9 +495,13 @@ def main():
     print(f"Eval ID: {eval_id}")
     print(f"Train Run ID: {train_run_id}")
     print(f"Duration: {duration_s:.2f} s")
-    print(f"Total energy: {total_energy_wh:.6f} Wh")
-    print(f"Total J/request: {total_joule_per_request:.6f}")
+    if totals["valid"]:
+        print(f"Total energy: {total_energy_wh:.6f} Wh")
+    else:
+        print("Total energy: unavailable (incomplete device measurements)")
     print(f"Geschrieben: {out_path}")
+    if not totals["valid"]:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
