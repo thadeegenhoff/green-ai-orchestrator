@@ -1,3 +1,5 @@
+# Set GREENAI_APP_IMAGE to an image built from this repository before running the controller.
+# Application image values below are local placeholders, not published images.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -81,7 +83,7 @@ spec:
               ephemeral-storage: "128Mi"
 
         - name: superexec-serverapp
-          image: thadegreen/flwr-cifar-superexec:0.2
+          image: greenai-review:local
           imagePullPolicy: Always
           command: ["/bin/sh", "-c"]
           args:
@@ -230,7 +232,7 @@ spec:
               ephemeral-storage: "128Mi"
 
         - name: superexec-clientapp
-          image: thadegreen/flwr-cifar-superexec:0.2
+          image: greenai-review:local
           imagePullPolicy: Always
           command: ["/bin/sh", "-c"]
           args:
@@ -359,7 +361,7 @@ spec:
               ephemeral-storage: "128Mi"
 
         - name: superexec-clientapp
-          image: thadegreen/flwr-cifar-superexec:0.2
+          image: greenai-review:local
           imagePullPolicy: Always
           command: ["/bin/sh", "-c"]
           args:
@@ -488,7 +490,7 @@ spec:
               ephemeral-storage: "128Mi"
 
         - name: superexec-clientapp
-          image: thadegreen/flwr-cifar-superexec:0.2
+          image: greenai-review:local
           imagePullPolicy: Always
           command: ["/bin/sh", "-c"]
           args:
@@ -617,7 +619,7 @@ spec:
               ephemeral-storage: "128Mi"
 
         - name: superexec-clientapp
-          image: thadegreen/flwr-cifar-superexec:0.2
+          image: greenai-review:local
           imagePullPolicy: Always
           command: ["/bin/sh", "-c"]
           args:

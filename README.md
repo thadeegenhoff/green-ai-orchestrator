@@ -1,6 +1,6 @@
 # Green AI Orchestrator
 
-This prototype runs configurable Flower training on a local K3s/Kubernetes pool, retains the final model, deploys HTTP inference and joins AI metrics with physical-device energy readings. The independent measurement services live in [green-ai-sustainability](https://github.com/thadeegenhoff/green-ai-sustainability).
+This prototype runs configurable Flower training on a local K3s/Kubernetes pool, retains the final model, deploys HTTP inference and joins AI metrics with physical-device energy readings. The independent measurement services live in [green-ai-sustainability](https://github.com/thadeegenhoff/green-ai-sustainability). If that link is hidden in an anonymised review mirror, use the separate measurement-component link supplied with the manuscript.
 
 The repositories contain implementation code and example configurations. Original experiment databases, run directories and trained models are not included. A fresh execution produces new results; it does not reproduce the thesis numbers merely by using the same YAML.
 
@@ -13,6 +13,8 @@ The orchestrator needs the measurement host's reachable IP, not the Compose-inte
 ## 2. Install the controller and application
 
 Use Linux, Python 3.11 or later supported by the dependencies, a working `kubectl` context and a ready K3s/Kubernetes cluster. Docker with Buildx is needed when building images. Internet access is needed for Python packages, images and the CIFAR-10 dataset.
+
+For an anonymised review mirror, use its **Download repository as ZIP** control and open a terminal in the extracted directory. The clone command below applies to the public repository; skip the clone and `cd` lines when working from a downloaded snapshot.
 
 ```bash
 git clone https://github.com/thadeegenhoff/green-ai-orchestrator.git
