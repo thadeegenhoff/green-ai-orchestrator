@@ -1,0 +1,9 @@
+Green AI Orchestrator
+Copyright 2026 Thade Egenhoff
+
+Licensed under the Apache License, Version 2.0.
+
+This project includes material derived from the Flower PyTorch quickstart.
+Its existing Apache-2.0 licence is retained in quickstart-pytorch/LICENSE.
+
+Third-party components retain their respective licences and notices.

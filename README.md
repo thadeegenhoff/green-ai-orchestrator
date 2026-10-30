@@ -134,4 +134,10 @@ The tests cover integration arithmetic, missing observations, incomplete totals 
 
 This is a locally controlled research demonstrator. Flower communication uses the existing insecure configuration; a production deployment needs a separate security design. No independent reproduction or lifecycle environmental benefit is established by publishing the code.
 
-The Flower quickstart's Apache-2.0 licence is retained under `quickstart-pytorch/LICENSE`. A repository-wide licence for the added project material has not yet been selected; do not interpret public visibility as a licence grant for all files.
+## License
+
+Copyright 2026 Thade Egenhoff.
+
+Except where otherwise noted, the original code, configuration files and documentation in this repository are licensed under the [Apache License, Version 2.0](LICENSE) (`Apache-2.0`). See [NOTICE](NOTICE) for attribution information.
+
+The Flower quickstart's existing Apache-2.0 licence is retained under [`quickstart-pytorch/LICENSE`](quickstart-pytorch/LICENSE). Third-party software, container images and datasets retain their respective licences.
