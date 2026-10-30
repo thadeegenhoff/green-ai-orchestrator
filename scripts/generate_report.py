@@ -89,13 +89,15 @@ def write_energy_csv(path, energy):
         "avg_power_w",
         "max_power_w",
         "sample_count",
+        "valid",
+        "measurement_status",
     ]
 
     with Path(path).open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in energy.get("nodes", []):
-            writer.writerow(row)
+            writer.writerow({key: row.get(key) for key in fieldnames})
 
 
 def md_table(headers, rows):
@@ -166,7 +168,11 @@ def main():
     metrics = load_json(run_dir / "flower_metrics.json", default={}) or {}
     validation = load_json(run_dir / "validation.json", default={}) or {}
     round_rows = read_csv_rows(run_dir / "metrics_rounds.csv")
-    energy = parse_energy_log(run_dir / "energy_summary.log")
+    # Prefer structured data so invalid devices and unavailable totals survive
+    # report generation. Retain the log parser for historical run directories.
+    energy = load_json(run_dir / "energy_summary.json")
+    if energy is None:
+        energy = parse_energy_log(run_dir / "energy_summary.log")
 
     write_energy_csv(run_dir / "energy_nodes.csv", energy)
 
@@ -203,6 +209,8 @@ def main():
         "final_accuracy": final_accuracy,
         "final_loss": final_loss,
         "total_energy_wh": energy.get("total_energy_wh"),
+        "energy_valid": energy.get("valid"),
+        "energy_measurement_status": energy.get("measurement_status"),
         "train_failures_total": metrics.get("train_failures_total"),
         "evaluate_failures_total": metrics.get("evaluate_failures_total"),
     }
@@ -301,13 +309,18 @@ def main():
                 node.get("avg_power_w"),
                 node.get("max_power_w"),
                 node.get("sample_count"),
+                node.get("valid"),
+                node.get("measurement_status"),
             ])
         lines.append(md_table(
-            ["Node", "Device", "Energy Wh", "Avg W", "Max W", "Samples"],
+            ["Node", "Device", "Energy Wh", "Avg W", "Max W", "Samples", "Energy valid", "Measurement status"],
             rows,
         ))
         lines.append("")
-        lines.append(f"Total energy: **{energy.get('total_energy_wh')} Wh**")
+        if energy.get("total_energy_wh") is None:
+            lines.append("Total energy unavailable: device measurements are incomplete or invalid.")
+        else:
+            lines.append(f"Total energy: **{energy.get('total_energy_wh')} Wh**")
     else:
         lines.append("No energy results available.")
     lines.append("")

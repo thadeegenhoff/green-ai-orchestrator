@@ -1,20 +1,18 @@
-FROM thadegreen/quickstart-pytorch-flex:0.1
+ARG FLWR_VERSION=1.29.0
+FROM flwr/superexec:${FLWR_VERSION}
 
 USER root
-
-RUN python3 -m pip install --no-cache-dir \
-    fastapi \
-    uvicorn \
-    python-multipart \
-    pillow \
-    httpx \
-    influxdb-client
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+COPY --chown=app:app quickstart-pytorch/ /app/
+USER app
+RUN python3 -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch torchvision \
+    && python3 -m pip install --no-cache-dir . fastapi uvicorn python-multipart pillow httpx influxdb-client
 
-COPY quickstart-pytorch/pytorchexample /app/pytorchexample
-
-COPY scripts/inference_service_local.py /app/scripts/inference_service_local.py
-COPY scripts/benchmark_inference_http_local.py /app/scripts/benchmark_inference_http_local.py
-
+COPY --chown=app:app scripts/inference_service_local.py /app/scripts/inference_service_local.py
+COPY --chown=app:app scripts/benchmark_inference_http_local.py /app/scripts/benchmark_inference_http_local.py
 ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["flower-superexec"]

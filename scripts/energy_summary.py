@@ -10,6 +10,8 @@ from dateutil.parser import isoparse
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 
+from energy_integration import aggregate_energy_results, calculate_energy
+
 
 INFLUX_URL = os.environ["INFLUX_URL"]
 INFLUX_ORG = os.environ["INFLUX_ORG"]
@@ -66,52 +68,6 @@ from(bucket: "{flux_escape(INFLUX_BUCKET)}")
     return samples
 
 
-def calculate_energy(samples, start_time, end_time, idle_power_w=None):
-    duration_s = (end_time - start_time).total_seconds()
-    duration_h = duration_s / 3600.0
-
-    if len(samples) < 2 or duration_s <= 0:
-        return {
-            "duration_s": duration_s,
-            "sample_count": len(samples),
-            "energy_wh": 0.0,
-            "net_energy_wh": None,
-            "avg_power_w": 0.0,
-            "max_power_w": 0.0
-        }
-
-    points = [(start_time, samples[0][1])] + samples + [(end_time, samples[-1][1])]
-
-    energy_wh = 0.0
-
-    for i in range(len(points) - 1):
-        t1, p1 = points[i]
-        t2, p2 = points[i + 1]
-
-        delta_s = (t2 - t1).total_seconds()
-        if delta_s <= 0:
-            continue
-
-        avg_power = (p1 + p2) / 2.0
-        energy_wh += avg_power * delta_s / 3600.0
-
-    avg_power_w = energy_wh / duration_h if duration_h > 0 else 0.0
-    max_power_w = max(p for _, p in samples)
-
-    net_energy_wh = None
-    if idle_power_w is not None:
-        net_energy_wh = max(0.0, energy_wh - float(idle_power_w) * duration_h)
-
-    return {
-        "duration_s": duration_s,
-        "sample_count": len(samples),
-        "energy_wh": energy_wh,
-        "net_energy_wh": net_energy_wh,
-        "avg_power_w": avg_power_w,
-        "max_power_w": max_power_w
-    }
-
-
 def main():
     if len(sys.argv) != 2:
         print("Nutzung: python energy_summary.py runs/<RUN_ID>")
@@ -135,9 +91,7 @@ def main():
     start_time = parse_time(meta["start_time"])
     end_time = parse_time(meta["end_time"])
 
-    total_energy_wh = 0.0
-    total_net_energy_wh = 0.0
-    has_net = False
+    node_results = []
 
     with InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG) as client:
         write_api = client.write_api(write_options=SYNCHRONOUS)
@@ -167,11 +121,7 @@ def main():
                 idle_power_w=idle_power_w
             )
 
-            total_energy_wh += summary["energy_wh"]
-
-            if summary["net_energy_wh"] is not None:
-                total_net_energy_wh += summary["net_energy_wh"]
-                has_net = True
+            node_results.append({"node": node, "device": power_tag_value, **summary})
 
             point = (
                 Point("fl_energy_summary")
@@ -189,44 +139,61 @@ def main():
                 .tag("arch", arch)
                 .field("duration_s", float(summary["duration_s"]))
                 .field("sample_count", int(summary["sample_count"]))
-                .field("energy_wh", float(summary["energy_wh"]))
-                .field("avg_power_w", float(summary["avg_power_w"]))
-                .field("max_power_w", float(summary["max_power_w"]))
+                .field("valid", float(summary["valid"]))
+                .field("measurement_status", summary["measurement_status"])
                 .time(end_time, WritePrecision.NS)
             )
 
-            if summary["net_energy_wh"] is not None:
-                point.field("net_energy_wh", float(summary["net_energy_wh"]))
+            for field in ["energy_wh", "net_energy_wh", "avg_power_w", "max_power_w"]:
+                if summary[field] is not None:
+                    point.field(field, float(summary[field]))
 
             write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=point)
 
-            print(
-                f"{node} / device={power_tag_value}: "
-                f"{summary['energy_wh']:.4f} Wh, "
-                f"avg={summary['avg_power_w']:.2f} W, "
-                f"max={summary['max_power_w']:.2f} W, "
-                f"samples={summary['sample_count']}"
-            )
+            if summary["valid"]:
+                print(
+                    f"{node} / device={power_tag_value}: "
+                    f"{summary['energy_wh']:.4f} Wh, "
+                    f"avg={summary['avg_power_w']:.2f} W, "
+                    f"max={summary['max_power_w']:.2f} W, "
+                    f"samples={summary['sample_count']}"
+                )
+            else:
+                print(f"{node} / device={power_tag_value}: INVALID "
+                      f"({summary['measurement_status']}), samples={summary['sample_count']}")
 
+        totals = aggregate_energy_results(node_results)
         run_point = (
             Point("fl_run_summary")
             .tag("run_id", run_id)
             .tag("strategy", strategy)
             .tag("dataset", dataset)
             .tag("model", model)
-            .field("total_energy_wh", float(total_energy_wh))
+            .field("energy_valid", float(totals["valid"]))
+            .field("measurement_status", totals["measurement_status"])
+            .field("valid_power_node_count", totals["valid_power_node_count"])
+            .field("invalid_power_node_count", totals["invalid_power_node_count"])
             .field("duration_s", float((end_time - start_time).total_seconds()))
             .time(end_time, WritePrecision.NS)
         )
 
-        if has_net:
-            run_point.field("total_net_energy_wh", float(total_net_energy_wh))
+        for field in ["total_energy_wh", "total_net_energy_wh"]:
+            if totals[field] is not None:
+                run_point.field(field, float(totals[field]))
 
         write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=run_point)
 
     print("---")
     print(f"Run: {run_id}")
-    print(f"Total energy: {total_energy_wh:.4f} Wh")
+    result = {"schema_version": 1, "run_id": run_id, "nodes": node_results, **totals}
+    (run_dir / "energy_summary.json").write_text(
+        json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    if totals["valid"]:
+        print(f"Total energy: {totals['total_energy_wh']:.4f} Wh")
+    else:
+        print("Total energy: unavailable (incomplete device measurements)")
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

@@ -463,7 +463,7 @@ def generate_client_workloads(kubernetes_runtime, run_config, namespace, env):
         )
     )
 
-    app_image = kubernetes_runtime.get("app_image", "thadegreen/quickstart-pytorch-flex:0.1")
+    app_image = env.get("APP_IMAGE") or kubernetes_runtime.get("app_image", "thadegreen/quickstart-pytorch-flex:0.1")
     supernode_image = kubernetes_runtime.get("supernode_image", "flwr/supernode:1.29.0")
 
     docs = []
@@ -832,6 +832,7 @@ def copy_final_model_from_serverapp(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, help="Pfad zur Experiment-YAML.")
+    parser.add_argument("--profile", help="Optionaler Override des Clusterprofils aus der YAML.")
     args = parser.parse_args()
 
     config_path = Path(args.config)
@@ -843,7 +844,7 @@ def main():
     metrics_export = config.get("metrics_export", {})
     report = config.get("report", {})
 
-    cluster_profile_path = config.get("cluster_profile")
+    cluster_profile_path = args.profile or config.get("cluster_profile")
     if not cluster_profile_path:
         print("Fehler: cluster_profile fehlt in der Experiment-Konfiguration.")
         sys.exit(1)
@@ -913,7 +914,7 @@ def main():
     env["BATCH_SIZE"] = str(run_config.get("batch-size", ""))
 
     env["APP_IMAGE"] = str(
-        kubernetes_runtime.get("app_image", "thadegreen/quickstart-pytorch-flex:0.1")
+        os.environ.get("GREENAI_APP_IMAGE") or kubernetes_runtime.get("app_image", "thadegreen/quickstart-pytorch-flex:0.1")
     )
     env["SUPERLINK_IMAGE"] = str(
         kubernetes_runtime.get("superlink_image", "flwr/superlink:1.29.0")
@@ -946,6 +947,7 @@ def main():
         "strategy": strategy,
         "dataset": dataset,
         "model": model,
+        "runtime_images": {key: env[key] for key in ["APP_IMAGE", "SUPERLINK_IMAGE", "SUPERNODE_IMAGE"]},
         "requested_num_server_rounds": requested_rounds,
         "namespace": namespace,
         "label_selector": label_selector,
@@ -1212,6 +1214,9 @@ def main():
     print(f"Return Code: {return_code}", flush=True)
     print(f"Run-Verzeichnis: {run_dir}", flush=True)
 
+    if return_code == 0 and final_meta.get("energy_summary_return_code") not in (None, 0):
+        print("Training abgeschlossen, aber Energieauswertung unvollständig oder fehlgeschlagen.", flush=True)
+        sys.exit(2)
     sys.exit(return_code)
 
 

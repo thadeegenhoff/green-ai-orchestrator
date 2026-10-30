@@ -1,182 +1,137 @@
-# GreenAI Orchestrator
+# Green AI Orchestrator
 
-Kurze Anleitung für den Orchestrator der GreenAI-Demonstrationsumgebung.
+This prototype runs configurable Flower training on a local K3s/Kubernetes pool, retains the final model, deploys HTTP inference and joins AI metrics with physical-device energy readings. The independent measurement services live in [green-ai-sustainability](https://github.com/thadeegenhoff/green-ai-sustainability).
 
-Dieses Repository startet und dokumentiert Flower-Experimente auf einem K3s/Kubernetes-Cluster. Es verteilt Flower-Komponenten auf die vorhandenen Nodes, schreibt Trainings-, Energie- und Inferenzmetriken nach InfluxDB und speichert alle Laufdaten in `runs/`.
+The repositories contain implementation code and example configurations. Original experiment databases, run directories and trained models are not included. A fresh execution produces new results; it does not reproduce the thesis numbers merely by using the same YAML.
 
-Die Nachhaltigkeitsarchitektur mit Mosquitto, Node-RED, InfluxDB und Grafana liegt separat in `green-ai-sustainability`.
+## 1. Start the measurement services
 
-## Was macht der Orchestrator?
+Follow the companion repository's README first, including the Node-RED InfluxDB token configuration. Check the Shelly → MQTT → Node-RED → InfluxDB path before running an AI experiment.
 
-1. Experiment aus einer YAML-Datei lesen.
-2. Kubernetes-Manifeste aus Templates erzeugen.
-3. Flower SuperLink und SuperNodes im K3s-Cluster starten.
-4. Training ausführen und Logs/Metriken speichern.
-5. Energiedaten aus InfluxDB auswerten.
-6. Finales Modell, Report und Metriken unter `runs/<run_id>/` ablegen.
+The orchestrator needs the measurement host's reachable IP, not the Compose-internal name `influxdb`.
 
-## Wichtige Dateien
+## 2. Install the controller and application
 
-```text
-run_experiment.py                         # startet und dokumentiert Trainingsläufe
-cluster_profiles/k3s_greenai.yaml         # Clusterprofil für die K3s-Umgebung
-node_mapping.json                         # Zuordnung zwischen Experiment-Nodes und realen Geräten
-experiments/                              # YAML-Dateien für Trainingskonfigurationen
-k8s/                                      # Kubernetes-Templates
-quickstart-pytorch/                       # Flower-App mit Modell, ServerApp und ClientApp
-scripts/                                  # Auswertungs-, Influx- und Inferenzskripte
-Dockerfile.greenai                        # Dockerfile für das GreenAI-Image
-.env.influx.example                       # Vorlage für die InfluxDB-Verbindung
-```
-
-## Voraussetzungen
-
-- Linux-Umgebung mit Python 3
-- Zugriff auf einen laufenden K3s/Kubernetes-Cluster
-- funktionierendes `kubectl`
-- Docker, falls Images gebaut werden sollen
-- laufende InfluxDB aus der Nachhaltigkeitsarchitektur
-- passende Nodes und Labels gemäß `cluster_profiles/k3s_greenai.yaml` und `node_mapping.json`
-
-Cluster prüfen:
+Use Linux, Python 3.11 or later supported by the dependencies, a working `kubectl` context and a ready K3s/Kubernetes cluster. Docker with Buildx is needed when building images. Internet access is needed for Python packages, images and the CIFAR-10 dataset.
 
 ```bash
-kubectl get nodes
-kubectl get namespace flwr || kubectl create namespace flwr
-```
-
-## Installation
-
-```bash
-git clone https://gitup.uni-potsdam.de/egenhoff/green-ai-orchestrator.git
+git clone https://github.com/thadeegenhoff/green-ai-orchestrator.git
 cd green-ai-orchestrator
-
 python3 -m venv .venv
 source .venv/bin/activate
-pip install --upgrade pip
-pip install -e quickstart-pytorch
-pip install influxdb-client pyyaml requests
+python -m pip install --upgrade pip
+python -m pip install -e quickstart-pytorch
+python -m pip install influxdb-client python-dateutil pyyaml requests markdown fastapi uvicorn python-multipart pillow httpx
 ```
 
-Für lokale oder HTTP-basierte Inferenztests zusätzlich:
+Flower is fixed to 1.29.0 to match the runtime images and application API. Simulation is optional (`pip install -e 'quickstart-pytorch[simulation]'`); it is not needed for the K3s deployment.
 
-```bash
-pip install fastapi uvicorn python-multipart pillow httpx
-```
-
-## InfluxDB konfigurieren
+## 3. Configure InfluxDB and the Flower connection
 
 ```bash
 cp .env.influx.example .env.influx
-nano .env.influx
-```
-
-Beispiel:
-
-```bash
-export INFLUX_URL="http://<SUSTAINABILITY-HOST-IP>:8086"
-export INFLUX_ORG="thade"
-export INFLUX_BUCKET="greenaidata"
-export INFLUX_TOKEN="PLEASE_SET_TOKEN_HERE"
-export POWER_MEASUREMENT="shelly_plug"
-export POWER_FIELD="power_w"
-export POWER_NODE_TAG="device"
-```
-
-Laden und testen:
-
-```bash
+# Edit .env.influx to match the companion stack, then:
 set -a
 source .env.influx
 set +a
-curl "$INFLUX_URL/health"
+curl --fail "$INFLUX_URL/health"
 ```
 
-Die echte `.env.influx` enthält Zugangsdaten und darf nicht in Git versioniert werden.
+Use the same `INFLUX_ORG`, `INFLUX_BUCKET` and token as the measurement stack. `.env.influx` is ignored by Git.
 
-## Experiment anpassen
-
-Experimentkonfigurationen liegen in `experiments/`. Eine Konfiguration beschreibt unter anderem:
-
-- Strategie, z. B. `FedAvg` oder `FedAdam`
-- Datensatz und Datensplit
-- Anzahl der Runden
-- lokale Epochen
-- Lernrate und Batch Size
-- Client-Gruppen und Kubernetes-Platzierung
-
-Für einen neuen Lauf am einfachsten eine bestehende YAML-Datei kopieren und anpassen.
-
-## Experiment starten
+Create a project-local Flower connection, avoiding changes to other Flower projects:
 
 ```bash
-source .venv/bin/activate
-set -a
-source .env.influx
-set +a
+mkdir -p .flwr-local
+cp configs/flower-config.example.toml .flwr-local/config.toml
+export FLWR_HOME="$PWD/.flwr-local"
+flwr config list
+```
 
+The connection uses `127.0.0.1:9093`. `run_experiment.py` opens the matching port-forward to the cluster's SuperLink. Keep `FLWR_HOME` set in the terminal that starts the run. If using a different local port, update both the connection file and `cluster_profiles/k3s_greenai.yaml`.
+
+## 4. Adapt placement and physical-device mappings
+
+```bash
+kubectl get nodes --show-labels
+kubectl get namespace flwr || kubectl create namespace flwr
+CONTROL_NODE=your-control-node
+kubectl label node "$CONTROL_NODE" greenai.local/fl-role=server greenai.local/workload-zone=control --overwrite
+```
+
+Before the first run, adapt all three configuration surfaces:
+
+- `experiments/*.yaml`: `client_groups`, replica counts and node selectors. The supplied examples use the original worker hostnames. Match `kubernetes.io/hostname` selectors to your actual nodes, or use your own capability labels.
+- `cluster_profiles/k3s_greenai.yaml`: namespace, rollouts, port-forward and `nodes.include_for_energy`. Existing examples use the `flwr` namespace, also present in the Kubernetes template.
+- `node_mapping.json`: logical node → physical host/MQTT `device` tag, hardware metadata and optional measured idle-power baseline. VM energy is the physical host's energy. Replace the example baseline values with values from your own setup or remove them to omit net energy.
+
+The control node needs the two labels above. Selectors for worker groups must also match existing node labels. The sum of client replicas must equal `num-partitions`; the controller fills the latter when omitted and rejects a mismatch.
+
+## 5. Build and distribute the application image
+
+`Dockerfile.greenai` builds the application directly from the official Flower SuperExec image and the source in this repository. It does not require the author's prebuilt application image.
+
+```bash
+export GREENAI_APP_IMAGE=ghcr.io/your-account/greenai:ecis-demo
+# Log in to your chosen registry first.
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f Dockerfile.greenai -t "$GREENAI_APP_IMAGE" --push .
+```
+
+Use a registry that every selected K3s node can read, or configure the required registry credentials. A native-only local build is possible, but K3s uses its own container runtime: images must be imported on each selected node or pulled from a registry.
+
+`GREENAI_APP_IMAGE` overrides the application image in the supplied experiment YAMLs for both ServerApp and ClientApps. The historical example tags remain in those files for reference. Supply the same chosen image as `IMAGE` for inference. The controller records the resolved image references in `run_metadata.json`.
+
+Only the Flower version is constrained here. The remaining Python dependencies are not a complete historical lockfile; record the successful image digest and installed package versions for a fixed release.
+
+## 6. Run a small training experiment
+
+Start with a copy of an example adapted to your nodes and a small number of rounds:
+
+```bash
 python run_experiment.py \
   --config experiments/quickstart_fedavg_cifar10_iid_10r_flex.yaml \
   --profile cluster_profiles/k3s_greenai.yaml
 ```
 
-Weitere Optionen:
+`--profile` optionally overrides `cluster_profile` from the experiment YAML. Strategy, partitioning, rounds, epochs, batch size and client groups remain YAML parameters. The controller renders resources, waits for rollouts, starts Flower and retains outputs under `runs/<run_id>/`.
+
+Expected artefacts include `experiment_config.yaml`, `cluster_profile.yaml`, `k8s-rendered.yaml`, logs, validation, metrics, `run_metadata.json`, energy results and `model/final_model.pt`. Model definition and preprocessing are in `quickstart-pytorch/pytorchexample/`.
+
+## 7. Run controlled inference using that model
 
 ```bash
-python run_experiment.py --help
+TRAIN_RUN_ID=replace-with-an-existing-run-id
+export INFERENCE_NODE=pi5-8gb
+export BENCHMARK_NODE=greenai-control
+export IMAGE="$GREENAI_APP_IMAGE"
+export SAMPLES=1000
+export CONCURRENCY=4
+bash scripts/run_inference_eval_k3s.sh "$TRAIN_RUN_ID" "inference-$(date -u +%Y%m%dT%H%M%SZ)"
 ```
 
-## Ergebnisse
+Replace both node names with nodes from your cluster and use a new evaluation ID for each execution. The script loads `runs/<run_id>/model/final_model.pt`, creates the model ConfigMap, serving Deployment, Service and benchmark Job, copies the result files and writes metrics to InfluxDB. Outputs are retained under `runs/<run_id>/inference/<eval_id>/`. Larger models need a different storage adapter than the current ConfigMap approach.
 
-Jeder Lauf erzeugt einen eigenen Ordner:
+## Energy results and missing data
 
-```text
-runs/<run_id>/
-```
+Both energy exporters use trapezoidal integration of `power_w`. The first and last available powers are extended to the requested window boundaries. Net energy subtracts a configured idle baseline and is clipped at zero. Training uses the controller's start/end timestamps, including deployment/startup within that interval. Inference uses the benchmark timestamps, after health checks and warmup.
 
-Dort liegen typischerweise:
+At least two finite observations at distinct times within a positive-duration window are required. Missing or invalid measurements produce `valid=0` and a `measurement_status`; their energy fields are unavailable rather than zero. Real zero-power observations remain valid. A total is unavailable if any requested device has invalid data; net totals additionally require a baseline for every device. Exporters save structured JSON and return exit code 2 on incomplete measurements, while preserving the available performance outputs. Training reports retain the separate `energy_valid` status.
 
-```text
-Konfigurationen
-Kubernetes-Manifest
-Flower-Logs
-Validierungsergebnisse
-Metriken
-Energieauswertung
-Report als Markdown/HTML
-model/final_model.pt
-run_metadata.json
-```
+These checks do not establish calibration, clock accuracy or adequate temporal coverage. Large sample gaps are not automatically rejected. Original measurements are not changed by this code update. Do not reuse historical run/evaluation IDs when generating new results.
 
-Die wichtigsten Metriken werden zusätzlich nach InfluxDB geschrieben und können in Grafana visualisiert werden.
-
-## Inferenz testen
-
-Ein gespeichertes Modell kann anschließend auf einem K3s-Node als Inferenzdienst getestet werden. Dafür ist vor allem dieses Skript relevant:
+## Validation
 
 ```bash
-scripts/run_inference_eval_k3s.sh
+python -m unittest discover -s tests -v
+python -m compileall -q run_experiment.py scripts quickstart-pytorch/pytorchexample
+bash -n scripts/run_inference_eval_k3s.sh
 ```
 
-Der Inferenzlauf nutzt ein Modell aus `runs/<run_id>/model/final_model.pt`, erzeugt Kubernetes-Ressourcen für den Inferenzdienst und schreibt die Ergebnisse wieder nach InfluxDB.
+The tests cover integration arithmetic, missing observations, incomplete totals and export behavior without requiring K3s or InfluxDB. A physical cluster run remains a separate validation step.
 
-## Image bauen
+## Scope and licensing
 
-Falls Anwendungscode oder Abhängigkeiten verändert wurden, muss ein neues Image gebaut werden:
+This is a locally controlled research demonstrator. Flower communication uses the existing insecure configuration; a production deployment needs a separate security design. No independent reproduction or lifecycle environmental benefit is established by publishing the code.
 
-```bash
-docker build -t greenai-orchestrator:local -f Dockerfile.greenai .
-```
-
-Für gemischte x86-/ARM-Cluster sollte das Image als Multi-Arch-Image gebaut und in eine Registry gepusht werden.
-
-## Kurzablauf
-
-```bash
-kubectl get nodes
-source .venv/bin/activate
-set -a && source .env.influx && set +a
-python run_experiment.py --config <experiment-yaml> --profile cluster_profiles/k3s_greenai.yaml
-```
-
-Danach Ergebnisse in `runs/<run_id>/` und in Grafana prüfen.
+The Flower quickstart's Apache-2.0 licence is retained under `quickstart-pytorch/LICENSE`. A repository-wide licence for the added project material has not yet been selected; do not interpret public visibility as a licence grant for all files.
