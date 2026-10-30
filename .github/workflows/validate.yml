@@ -8,6 +8,7 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,3 +19,8 @@ jobs:
       - run: python -m compileall -q run_experiment.py scripts quickstart-pytorch/pytorchexample
       - run: bash -n scripts/run_inference_eval_k3s.sh
       - run: python run_experiment.py --help
+      - name: Build application image from repository sources
+        run: docker build -f Dockerfile.greenai -t greenai-ci .
+      - name: Check the built application runtime
+        run: |
+          docker run --rm --entrypoint python3 greenai-ci -c 'import torch, fastapi, httpx; from pytorchexample.task import Net; from pytorchexample.server_app import app; assert Net()(torch.zeros(1, 3, 32, 32)).shape == (1, 10)'
